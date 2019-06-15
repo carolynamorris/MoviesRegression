@@ -1,0 +1,207 @@
+---
+title: "Modeling and prediction for movies"
+output:
+  pdf_document: default
+  html_document:
+    fig_height: 4
+    highlight: pygments
+    theme: spacelab
+---
+
+## Setup
+
+### Load packages
+
+```{r load-packages, message = FALSE}
+library(ggplot2)
+library(dplyr)
+library(corrplot)
+library(GGally)
+library(gridExtra)
+```
+
+### Load data
+
+```{r load-data}
+load('movies.Rdata')
+```
+
+
+* * *
+
+## Part 1: Data
+
+The dataset is comprised of a random sample of 651 movies produced and released before 2016. It includes information from two sources: [Rotten Tomatoes](https://www.rottentomatoes.com/) and [IMDB](https://www.imdb.com/). Since the dataset is a random sample, the results of this study can be generalized to the population of all movies produced and released before 2016. However, we are limited to movies that are documented on Rotten Tomatoes and IMDB. We cannot use this data to establish causal relationships, as the data are observational, rather than being from a randomized experiment.
+
+* * *
+
+## Part 2: Research question
+
+The movie *Avengers: Endgame* was released in April, 2019, and went on to break several box office records, such as the highest grossing opening weekend, bringing in $1,223,641,414 worldwide. It currently has an audience score of 90% on Rotten Tomatoes. With so many variables contributing to the description of a movie (genre, runtime, release month, etc.), what attributes make a movie popular? 
+
+* * *
+
+## Part 3: Exploratory data analysis
+
+First, I created a new variable, **years_old**, which quantifies how many years old the movie is based on it's theater release year. I then visualized the relationships among the numeric variables, along with their individual distributions, in the following chart.
+
+```{r warning=FALSE}
+attach(movies)
+movies <- mutate(movies, years_old = 2019 - thtr_rel_year) 
+movies$runtime <- as.numeric(movies$runtime)
+num <- select(movies, audience_score, imdb_rating, runtime, imdb_num_votes, 
+              critics_score, years_old)
+ggpairs(num)
+```
+
+We see a strong, positive correlation between our response variable, **audience_score**, and the predictor variable **imdb_rating**. The below chart visualizes this relationship further, and colors each movie according to its **audience_rating**, either "Spilled" or "Upright".
+
+```{r}
+ggplot(movies, aes(x=audience_score, y=imdb_rating, color=audience_rating)) + 
+  geom_jitter() + xlab('Audience Score') + ylab('IMDB Rating') + 
+  ggtitle('Audience Score and IMDB Rating, Colored by Audience Rating') + 
+  labs(color='Audience Rating') 
+```
+
+I then visualized the relationships among numeric predictors further in the correlation plot below. In addition to the strong, positive correlations with **audience_score** and both **imdb_rating** and **critics_score**, there is a strong, positive correlation between **critics_score** and **imdb_rating**.
+
+```{r}
+cors <- cor(num, method='pearson', use='na.or.complete')
+corrplot(cors, type='upper')
+```
+
+In the grouped box plot below, we see that the **genre** of "Documentary" has the highest median **audience_score**, followed by "Musical & Performing Arts", while "Horror" has the lowest. "Action & Adventure" has the widest range in **audience_score**.
+
+```{r}
+ggplot(movies, aes(x=genre, y=audience_score)) + geom_boxplot() + coord_flip() +
+  xlab('Genre') + ylab('Audience Score') + 
+  ggtitle('Boxplots of Audience Score, Grouped by Genre')
+```
+
+Continuing our exploration of the **genre** and **audience_score**, we consider these two variables in relation to the **mpaa_rating**, and find that PG-13 Documentaries have the highest score, followed by R Musical & Performing Arts. The lowest scoring combination is PG-13 Science Fiction & Fantasy.
+
+```{r}
+data <- movies %>% group_by(mpaa_rating, genre) %>% summarise(avg=mean(audience_score))
+
+ggplot(data, aes(data$mpaa_rating, data$genre)) + geom_tile(aes(fill=data$avg)) +
+  xlab('MPAA Rating') + ylab('Genre') + 
+  ggtitle('Heatmap of Average Audience Score, \n Grouped by Genre and MPAA Rating') +
+  geom_text(aes(label = round(data$avg, 1))) +
+  labs(fill='Audience Score') 
+```
+
+This violin chart for the three movie types confirms the popularity of Documentaries that has been displayed in the other visualizations. TV Movies are not as popular as Feature Films and Documentaries. 
+
+```{r}
+ggplot(movies, aes(title_type, audience_score)) + geom_violin() +
+  xlab('Title Type') + ylab('Audience Score') + 
+  ggtitle('Distribution of Audience Score, Grouped by Title Type')
+```
+
+
+* * *
+
+## Part 4: Modeling
+
+To select a model, I used the backward stepwise p-value approach, since my question is focused more on model interpretation than predictability. The full model includes 19 of the 33 available variables (including the **years_old** one that I created). It leaves out the title, studio, director, and actor variables as these factors had too many levels for this analysis; it leaves out the URLs as they don't provide any predictive or explanatory power; and it leaves out the years of theater and DVD releases, which is captured in **years_old**. I removed missing data before fitting the model, which reduced the sample size from 651 to 619.
+
+```{r}
+movies <- movies %>% na.omit()
+
+movies$thtr_rel_month <- as.character(movies$thtr_rel_month)
+movies$thtr_rel_day <- as.character(movies$thtr_rel_day)
+movies$dvd_rel_month <- as.character(movies$dvd_rel_month)
+movies$dvd_rel_day <- as.character(movies$dvd_rel_day)
+
+model <- lm(audience_score ~ genre + runtime + mpaa_rating + years_old + thtr_rel_month + 
+              thtr_rel_day + dvd_rel_month + dvd_rel_day + imdb_rating + imdb_num_votes + 
+              critics_rating + critics_score + audience_rating + best_pic_nom + 
+              best_pic_win + best_actor_win + best_actress_win + best_dir_win + top200_box, 
+            data = movies)
+summary(model)
+```
+
+Starting with the full model above, I removed the variable with the highest p-value and refit the model. I repeated this process until all of the remaining predictors had a significant p-value. This approach resulted in a model with an adjusted R^2^ of 0.8847 that is comprised of 6 predictors: **genre**, **runtime**, **thtr_rel_month**, **imdb_rating**, **audience_rating**, **best_pic_nom**. These attributes are the most significant in determining a movie's popularity, and we can interpret them as follows, based on the output of the regression:
+
+* All else held constant, when the **genre** is Mystery & Suspense, the audience score decreases by -3.19626 on average.
+* All else held constant, for every 1 minute increase in **runtime**, the audience score decreases by -0.03448 on average.
+* All else held constant, when the **thtr_rel_month** is 8 (August), the audience score decreases by -2.91225 on average.
+* All else held constant, for every 1 point increase in **imdb_rating**, the audience score increases by 9.77714 on average.
+* All else held constant, when the **audience_rating** is Upright, the audience score increases by 20.42074 on average.
+* All else held constant, when the **best_pic_nom** is "yes", the audience score increases by 3.45914 on average.
+
+The intercept is negative, which doesn't provide any insight in this case, as the audience score cannot be below 0.
+
+
+```{r}
+model <- lm(audience_score ~ genre + runtime + thtr_rel_month + imdb_rating + 
+              audience_rating + best_pic_nom, 
+            data = movies)
+summary(model)
+```
+
+Next, we perform diagnostics for our MLR model to check if they support the model assumptions.
+
+I) The plots below show a random scatter around 0, indicating that there is no linear relationship between the numeric predictors and audience score.
+
+```{r}
+resid <- data.frame(Residuals=model$residuals, Runtime=movies$runtime, 
+                    IMDB=movies$imdb_rating, Fitted=model$fitted)
+plot1 <- ggplot(resid, aes(Runtime, Residuals)) + geom_point() + 
+  ggtitle('Residuals vs. Runtime')
+plot2 <- ggplot(resid, aes(IMDB, Residuals)) + geom_point() + 
+  ggtitle('Residuals vs. IMDB Rating') + xlab('IMDB Rating')
+grid.arrange(plot1, plot2, ncol=1)
+```
+
+II) The histogram and QQ plot of residuals below show that the residuals are nearly normal with mean 0. There are some minor irregularities, but nothing to be cause for concern.
+
+```{r message=FALSE}
+plot1 <- ggplot(resid, aes(Residuals)) + geom_histogram() + 
+  ggtitle('Histogram of Residuals') + ylab('Count')
+plot2 <- ggplot(resid, aes(sample=Residuals))+ stat_qq() + stat_qq_line() + 
+  xlab('Theoretical') + ylab('Sample') + ggtitle('QQ Plot of Residuals')
+grid.arrange(plot1, plot2, ncol=2)
+```
+
+III) The constant variability of residuals is shown in the below plot, which displays a random scatter of constant width around 0.
+
+```{r}
+ggplot(resid, aes(Fitted, abs(Residuals))) + geom_point() + 
+  ylab('Absolute Value of Residuals') + 
+  ggtitle('Absolute Value of Residuals vs. Fitted Value')
+```
+
+IV) The below chart indicates the residuals are independent, which means the observations are independent.
+
+```{r}
+ggplot(resid, aes(1:length(Residuals), Residuals)) + geom_point() + xlab('Index') + 
+  ggtitle('Residuals') + geom_hline(yintercept=0, linetype='dashed')
+```
+
+* * *
+
+## Part 5: Prediction
+
+In keeping with the Marvel movie theme, I made a prediction for *Captain America: Civil War* which was released in May 2016. The true audience score of this movie on Rotten Tomatoes is 89%. The data comes from [Rotten Tomatoes](https://www.rottentomatoes.com/m/captain_america_civil_war) and [IMDB](https://www.imdb.com/title/tt3498820/).
+
+```{r}
+newmovie <- data.frame(genre='Action & Adventure', 
+                       runtime=146, 
+                       thtr_rel_month='5',
+                       imdb_rating=7.8,
+                       audience_rating='Upright', 
+                       best_pic_nom='no')
+
+predict(model, newmovie, interval = "prediction", level = 0.95)
+```
+
+The predicted audience score is 84%, which is a slight underestimate of the true audience score, 89%. However, the true score is captured in the 95% prediction interval of [71, 97].
+
+* * *
+
+## Part 6: Conclusion
+
+The exploratory data analysis revealed the variation of popularity among the different genres, ratings, and title types. For instance, we noticed documentaries were more highly rated than other genres and title types. It also showed correlations between different predictors and the response, audience score. The regression model quantified what attributes make a movie popular: **genre**, **runtime**, **thtr_rel_month**, **imdb_rating**, **audience_rating**, **best_pic_nom**. One shortcoming is that a leading predictor, **audience_rating**, is closely related to **audience_score** by definition. With an R^2^ of 0.8847, there is room for improvement in the model, which could be remedied by increasing our sample size of 651. In addition to collecting more data, future studies could try nonlinear techniques and make predictions for more movies to get a better sense of predictive accuracy.    
+
+
